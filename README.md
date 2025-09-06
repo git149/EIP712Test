@@ -7,6 +7,7 @@
 ## 📚 什么是EIP712？
 
 EIP712（Ethereum Improvement Proposal 712）是以太坊的一个改进提案，定义了一种标准化的方式来对结构化数据进行哈希和签名。它解决了传统签名方式的几个关键问题：
+<img width="1850" height="1005" alt="image" src="https://github.com/user-attachments/assets/8c3f54ab-e88d-4c97-b055-e00d185b8ebe" />
 
 ### 🔍 核心概念
 
