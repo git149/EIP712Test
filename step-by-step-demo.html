@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EIP712 Permit 演示</title>
+    <!-- 多个备用ethers.js CDN链接，确保加载成功 -->
+    <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"
+            onerror="loadBackupEthers()"></script>
+
+    <script>
+        // 备用CDN加载函数
+        function loadBackupEthers() {
+            console.log('主CDN失败，尝试备用CDN...');
+            const backupUrls = [
+                'https://unpkg.com/ethers@5.7.2/dist/ethers.umd.min.js',
+                'https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js'
+            ];
+
+            let currentIndex = 0;
+
+            function tryNextCDN() {
+                if (currentIndex >= backupUrls.length) {
+                    showEthersError();
+                    return;
+                }
+
+                const script = document.createElement('script');
+                script.src = backupUrls[currentIndex];
+                script.onload = function() {
+                    console.log('✅ 备用CDN加载成功:', backupUrls[currentIndex]);
+                };
+                script.onerror = function() {
+                    console.log('❌ 备用CDN失败:', backupUrls[currentIndex]);
+                    currentIndex++;
+                    tryNextCDN();
+                };
+                document.head.appendChild(script);
+            }
+
+            tryNextCDN();
+        }
+
+        function showEthersError() {
+            document.body.innerHTML = `
+                <div style="background: #f8d7da; border: 1px solid #f5c6cb; padding: 20px; margin: 20px; border-radius: 5px; font-family: Arial, sans-serif;">
+                    <h2>❌ ethers.js 加载失败</h2>
+                    <p>所有CDN都无法访问，请尝试以下解决方案：</p>
+                    <ol>
+                        <li><strong>检查网络连接</strong> - 确保能正常访问互联网</li>
+                        <li><strong>刷新页面</strong> - 可能是临时网络问题</li>
+                        <li><strong>使用VPN</strong> - 如果在某些地区CDN被限制</li>
+                        <li><strong>下载本地文件</strong> - 从 <a href="https://github.com/ethers-io/ethers.js/releases" target="_blank">GitHub</a> 下载ethers.js</li>
+                    </ol>
+                    <button onclick="location.reload()" style="background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer;">
+                        🔄 刷新页面重试
+                    </button>
+                </div>
+            `;
+        }
+    </script>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .step { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; border: 1px solid #f5c6cb; }
+        button { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #6c757d; cursor: not-allowed; }
+        input { padding: 8px; margin: 5px; border: 1px solid #ddd; border-radius: 3px; width: 300px; }
+        .code { background: #f8f9fa; padding: 10px; border-radius: 3px; font-family: monospace; margin: 10px 0; }
+        .highlight { background: yellow; padding: 2px; }
+    </style>
+</head>
+<body>
+    <h1>🎯 EIP712 Permit 功能演示</h1>
+
+    <div class="step" style="background: #f8f9fa; border-left: 4px solid #007bff;">
+        <h2>📖 操作指南</h2>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div>
+                <h3>🔴 传统方式（第三步）</h3>
+                <ul>
+                    <li><strong>授权地址</strong>：填入任意有效的以太坊地址</li>
+                    <li><strong>推荐地址</strong>：测试地址或朋友的钱包地址</li>
+                    <li><strong>授权金额</strong>：填入您想授权的代币数量</li>
+                    <li><strong>实际场景</strong>：授权DeFi协议使用您的代币</li>
+                    <li><strong>费用</strong>：需要支付gas费用</li>
+                </ul>
+            </div>
+            <div>
+                <h3>🟢 EIP712方式（第四步）</h3>
+                <ul>
+                    <li><strong>授权地址</strong>：填入与第三步不同的地址</li>
+                    <li><strong>签名步骤</strong>：完全免费，无gas费用</li>
+                    <li><strong>执行步骤</strong>：第三方代为执行，支付gas</li>
+                    <li><strong>优势</strong>：用户体验更好，节省费用</li>
+                    <li><strong>应用</strong>：DeFi协议的无缝集成</li>
+                </ul>
+            </div>
+        </div>
+        <div class="highlight" style="background: #fff3cd; padding: 10px; margin-top: 10px;">
+            <strong>💡 重要提示：</strong>
+            授权地址可以是任意有效地址，不需要是您拥有的地址。在实际应用中，这通常是DeFi协议的合约地址。
+        </div>
+    </div>
+    
+    <div class="step">
+        <h2>📋 第一步：连接钱包和合约</h2>
+        <button onclick="connectWallet()">连接MetaMask</button>
+        <div id="walletStatus">未连接</div>
+        
+        <h3>合约配置</h3>
+        <input type="text" id="contractAddress" placeholder="输入合约地址" value="">
+        <button onclick="connectContract()">连接合约</button>
+        <div id="contractStatus">未连接</div>
+    </div>
+
+    <div class="step">
+        <h2>🔍 第二步：查看当前状态</h2>
+        <button onclick="checkTokenInfo()">查看代币信息</button>
+        <button onclick="checkBalance()">查看余额</button>
+        <button onclick="checkNonce()">查看Nonce</button>
+        <button onclick="showABIInfo()">查看ABI信息</button>
+        <div id="tokenInfo"></div>
+    </div>
+
+    <div class="step">
+        <h2>🔴 第三步：传统方式演示（2笔交易）</h2>
+        <p>这是传统的approve + transferFrom流程：</p>
+        <div class="highlight" style="background: #fff3cd; padding: 10px; margin: 10px 0; border-radius: 5px;">
+            <strong>📝 操作说明：</strong><br>
+            • <strong>授权地址</strong>：填入您想要授权的地址（可以是测试地址、朋友地址或DeFi合约地址）<br>
+            • <strong>授权金额</strong>：您允许该地址使用的代币数量<br>
+            • <strong>实际场景</strong>：比如授权Uniswap合约使用您的代币进行交易
+        </div>
+
+        <label>授权地址（被授权者）：</label>
+        <input type="text" id="traditionalSpender" placeholder="例如：0x742d35Cc6634C0532925a3b8D0C9e3e0C8b0e5e1" value="0x742d35Cc6634C0532925a3b8D0C9e3e0C8b0e5e1">
+
+        <label>授权金额（tokens）：</label>
+        <input type="text" id="traditionalAmount" placeholder="例如：1000" value="1000">
+
+        <div>
+            <button onclick="traditionalApprove()">1️⃣ 调用approve（需要gas）</button>
+            <button onclick="checkAllowance()">检查授权额度</button>
+            <button onclick="fillTestAddress('traditional')">🎯 填入测试地址</button>
+        </div>
+
+        <div id="traditionalResult"></div>
+    </div>
+
+    <div class="step">
+        <h2>🟢 第四步：EIP712方式演示（1笔交易）</h2>
+        <p class="highlight">这是新的permit流程，用户只需要签名，无需发送交易！</p>
+        <div class="highlight" style="background: #d1ecf1; padding: 10px; margin: 10px 0; border-radius: 5px;">
+            <strong>🚀 EIP712优势：</strong><br>
+            • <strong>步骤1</strong>：用户签名（完全免费，无gas费用）<br>
+            • <strong>步骤2</strong>：第三方执行permit（只需1笔交易）<br>
+            • <strong>对比传统</strong>：节省1笔交易，用户体验更好<br>
+            • <strong>实际应用</strong>：DeFi协议可以代用户支付gas费用
+        </div>
+
+        <label>授权地址（被授权者）：</label>
+        <input type="text" id="permitSpender" placeholder="例如：0x1234567890123456789012345678901234567890" value="0x1234567890123456789012345678901234567890">
+
+        <label>授权金额（tokens）：</label>
+        <input type="text" id="permitAmount" placeholder="例如：2000" value="2000">
+
+        <div>
+            <button onclick="generatePermitSignature()">1️⃣ 生成EIP712签名（免费）</button>
+            <button onclick="executePermit()">2️⃣ 执行permit（需要gas）</button>
+            <button onclick="fillTestAddress('permit')">🎯 填入测试地址</button>
+        </div>
+
+        <div id="permitResult"></div>
+    </div>
+
+    <div class="step" style="background: #fff3cd; border-left: 4px solid #ffc107;">
+        <h2>🔍 重要概念解释</h2>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+            <div>
+                <h3>❓ permit ≠ transfer</h3>
+                <div class="code">
+                    <p><strong>permit函数作用：</strong></p>
+                    <p>• 授权某个地址使用您的代币</p>
+                    <p>• 等同于 approve(spender, amount)</p>
+                    <p>• 代币仍然在您的账户中</p>
+                    <p>• 只是给了别人使用权限</p>
+                </div>
+
+                <h4>🔄 完整流程：</h4>
+                <div class="code">
+                    <p>1. permit() - 授权</p>
+                    <p>2. transferFrom() - 实际转账</p>
+                </div>
+            </div>
+            <div>
+                <h3>📝 为什么需要这么多参数？</h3>
+                <div class="code">
+                    <p><strong>EIP712签名验证需要：</strong></p>
+                    <p>• owner: 验证签名者身份</p>
+                    <p>• spender: 确认被授权者</p>
+                    <p>• value: 确认授权金额</p>
+                    <p>• deadline: 防止签名被长期滥用</p>
+                    <p>• v,r,s: 签名数据，用于验证</p>
+                </div>
+
+                <h4>🛡️ 安全机制：</h4>
+                <div class="code">
+                    <p>• 防止重放攻击（nonce）</p>
+                    <p>• 防止跨链攻击（域分隔符）</p>
+                    <p>• 防止长期滥用（deadline）</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="step">
+        <h2>📊 第五步：对比结果</h2>
+        <button onclick="compareResults()">对比gas费用</button>
+        <button onclick="showPermitVsTransfer()">📖 查看permit vs transfer详解</button>
+        <button onclick="showGaslessDemo()">🚀 协议代付gas演示</button>
+        <button onclick="showBatchOptimization()">📦 打包优化演示</button>
+        <div id="comparison"></div>
+    </div>
+
+    <script>
+        // 检查ethers.js是否正确加载
+        function checkEthersLoaded() {
+            if (typeof ethers === 'undefined') {
+                document.body.innerHTML = `
+                    <div style="background: #f8d7da; border: 1px solid #f5c6cb; padding: 20px; margin: 20px; border-radius: 5px;">
+                        <h2>❌ ethers.js 加载失败</h2>
+                        <p>请尝试以下解决方案：</p>
+                        <ol>
+                            <li>检查网络连接</li>
+                            <li>刷新页面重试</li>
+                            <li>或者手动下载ethers.js文件到本地</li>
+                        </ol>
+                        <button onclick="location.reload()">刷新页面</button>
+                        <hr>
+                        <h3>备用CDN链接：</h3>
+                        <p>如果问题持续，请尝试替换HTML中的script标签为以下任一选项：</p>
+                        <code>&lt;script src="https://unpkg.com/ethers@5.7.2/dist/ethers.umd.min.js"&gt;&lt;/script&gt;</code><br>
+                        <code>&lt;script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"&gt;&lt;/script&gt;</code>
+                    </div>
+                `;
+                return false;
+            }
+            return true;
+        }
+
+        let provider, signer, contract, userAddress;
+        let permitSignature = null;
+        let traditionalGas = 0, permitGas = 0;
+
+        // 从EIP712TokenABI.json导入的完整合约ABI
+        let contractABI = [];
+
+        // 异步加载ABI文件
+        async function loadContractABI() {
+            try {
+                const response = await fetch('./EIP712TokenABI.json');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                contractABI = await response.json();
+                console.log('✅ 合约ABI加载成功，包含', contractABI.length, '个函数/事件');
+                return true;
+            } catch (error) {
+                console.error('❌ 加载ABI文件失败:', error);
+                // 如果加载失败，使用简化版ABI作为备用
+                contractABI = [
+                    "function name() view returns (string)",
+                    "function symbol() view returns (string)",
+                    "function decimals() view returns (uint8)",
+                    "function totalSupply() view returns (uint256)",
+                    "function balanceOf(address) view returns (uint256)",
+                    "function allowance(address,address) view returns (uint256)",
+                    "function approve(address,uint256) returns (bool)",
+                    "function transfer(address,uint256) returns (bool)",
+                    "function transferFrom(address,address,uint256) returns (bool)",
+                    "function permit(address,address,uint256,uint256,uint8,bytes32,bytes32)",
+                    "function transferWithPermit(address,address,uint256,uint256,uint8,bytes32,bytes32)",
+                    "function getNonce(address) view returns (uint256)",
+                    "function getDomainSeparator() view returns (bytes32)",
+                    "function getPermitTypeHash() pure returns (bytes32)",
+                    "function getTransferTypeHash() pure returns (bytes32)",
+                    "function getPermitHash(address,address,uint256,uint256,uint256) pure returns (bytes32)",
+                    "function getTransferHash(address,address,uint256,uint256,uint256) pure returns (bytes32)",
+                    "function getDigest(bytes32) view returns (bytes32)",
+                    "function batchTransfer(address[],uint256[]) returns (bool)",
+                    "event Transfer(address indexed from, address indexed to, uint256 value)",
+                    "event Approval(address indexed owner, address indexed spender, uint256 value)",
+                    "event PermitUsed(address indexed owner, address indexed spender, uint256 value, uint256 nonce, uint256 deadline)",
+                    "event TransferWithPermit(address indexed from, address indexed to, uint256 value, uint256 nonce, address indexed executor)"
+                ];
+                console.log('⚠️ 使用备用简化ABI');
+                return false;
+            }
+        }
+
+        // EIP712域和类型定义
+        const domain = {
+            name: 'EIP712 Test Token',
+            version: '1',
+            chainId: 11155111, // Sepolia
+            verifyingContract: '' // 将在连接合约时设置
+        };
+
+        const types = {
+            Permit: [
+                { name: 'owner', type: 'address' },
+                { name: 'spender', type: 'address' },
+                { name: 'value', type: 'uint256' },
+                { name: 'nonce', type: 'uint256' },
+                { name: 'deadline', type: 'uint256' }
+            ]
+        };
+
+        async function connectWallet() {
+            try {
+                // 检查ethers.js是否可用
+                if (typeof ethers === 'undefined') {
+                    throw new Error('ethers.js 未正确加载，请刷新页面重试');
+                }
+
+                if (typeof window.ethereum !== 'undefined') {
+                    provider = new ethers.providers.Web3Provider(window.ethereum);
+                    await provider.send("eth_requestAccounts", []);
+                    signer = provider.getSigner();
+                    userAddress = await signer.getAddress();
+
+                    document.getElementById('walletStatus').innerHTML =
+                        `<div class="success">✅ 已连接: ${userAddress}</div>`;
+                } else {
+                    throw new Error('请安装MetaMask');
+                }
+            } catch (error) {
+                document.getElementById('walletStatus').innerHTML =
+                    `<div class="error">❌ 连接失败: ${error.message}</div>`;
+            }
+        }
+
+        async function connectContract() {
+            try {
+                const address = document.getElementById('contractAddress').value;
+                if (!address) {
+                    throw new Error('请输入合约地址');
+                }
+
+                document.getElementById('contractStatus').innerHTML = '⏳ 正在加载合约ABI和连接合约...';
+
+                // 确保ABI已加载
+                if (contractABI.length === 0) {
+                    await loadContractABI();
+                }
+
+                // 标准化合约地址
+                const normalizedAddress = ethers.utils.getAddress(address.trim());
+
+                contract = new ethers.Contract(normalizedAddress, contractABI, signer);
+                domain.verifyingContract = normalizedAddress;
+
+                // 测试合约连接
+                const name = await contract.name();
+
+                document.getElementById('contractStatus').innerHTML =
+                    `<div class="success">✅ 已连接合约: ${name}<br>地址: ${normalizedAddress}<br>ABI函数数量: ${contractABI.length}</div>`;
+            } catch (error) {
+                document.getElementById('contractStatus').innerHTML =
+                    `<div class="error">❌ 合约连接失败: ${error.message}</div>`;
+            }
+        }
+
+        async function checkTokenInfo() {
+            try {
+                const name = await contract.name();
+                const symbol = await contract.symbol();
+                const balance = await contract.balanceOf(userAddress);
+                const nonce = await contract.getNonce(userAddress);
+
+                document.getElementById('tokenInfo').innerHTML = `
+                    <div class="success">
+                        <h4>代币信息：</h4>
+                        <p>名称: ${name}</p>
+                        <p>符号: ${symbol}</p>
+                        <p>余额: ${ethers.utils.formatEther(balance)} tokens</p>
+                        <p>当前Nonce: ${nonce}</p>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('tokenInfo').innerHTML =
+                    `<div class="error">❌ 获取信息失败: ${error.message}</div>`;
+            }
+        }
+
+        async function checkBalance() {
+            try {
+                if (!contract || !userAddress) {
+                    throw new Error('请先连接钱包和合约');
+                }
+
+                const balance = await contract.balanceOf(userAddress);
+                document.getElementById('tokenInfo').innerHTML = `
+                    <div class="success">
+                        <h4>余额信息：</h4>
+                        <p>地址: ${userAddress}</p>
+                        <p>余额: ${ethers.utils.formatEther(balance)} tokens</p>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('tokenInfo').innerHTML =
+                    `<div class="error">❌ 查看余额失败: ${error.message}</div>`;
+            }
+        }
+
+        async function checkNonce() {
+            try {
+                if (!contract || !userAddress) {
+                    throw new Error('请先连接钱包和合约');
+                }
+
+                const nonce = await contract.getNonce(userAddress);
+                document.getElementById('tokenInfo').innerHTML = `
+                    <div class="success">
+                        <h4>Nonce信息：</h4>
+                        <p>地址: ${userAddress}</p>
+                        <p>当前Nonce: ${nonce}</p>
+                        <p>说明: 每次使用permit后nonce会自动+1</p>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('tokenInfo').innerHTML =
+                    `<div class="error">❌ 查看Nonce失败: ${error.message}</div>`;
+            }
+        }
+
+        function showABIInfo() {
+            const functions = contractABI.filter(item => item.type === 'function' || typeof item === 'string');
+            const events = contractABI.filter(item => item.type === 'event');
+
+            document.getElementById('tokenInfo').innerHTML = `
+                <div class="success">
+                    <h4>📋 合约ABI信息：</h4>
+                    <p>总数量: ${contractABI.length} 项</p>
+                    <p>函数数量: ${functions.length}</p>
+                    <p>事件数量: ${events.length}</p>
+                    <p>ABI来源: ${contractABI.length > 30 ? 'EIP712TokenABI.json文件' : '备用简化ABI'}</p>
+
+                    <h5>🔧 主要函数：</h5>
+                    <div class="code" style="max-height: 200px; overflow-y: auto;">
+                        ${functions.slice(0, 10).map(func => {
+                            if (typeof func === 'string') {
+                                return `<p>• ${func}</p>`;
+                            } else {
+                                return `<p>• ${func.name}(${func.inputs ? func.inputs.map(i => i.type).join(', ') : ''})</p>`;
+                            }
+                        }).join('')}
+                        ${functions.length > 10 ? `<p>... 还有 ${functions.length - 10} 个函数</p>` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        // 填入测试地址的辅助函数
+        function fillTestAddress(type) {
+            const testAddresses = [
+                '0x742d35Cc6634C0532925a3b8D0C9e3e0C8b0e5e1', // 测试地址1
+                '0x1234567890123456789012345678901234567890', // 测试地址2
+                '0xdAC17F958D2ee523a2206206994597C13D831ec7', // USDT合约地址（示例）
+                '0xA0b86a33E6441E6C7D3E4C5B4B6C7D8E9F0A1B2C', // 随机测试地址
+                '0xB1C2D3E4F5A6B7C8D9E0F1A2B3C4D5E6F7A8B9C0'  // 随机测试地址
+            ];
+
+            if (type === 'traditional') {
+                const randomAddress = testAddresses[Math.floor(Math.random() * testAddresses.length)];
+                document.getElementById('traditionalSpender').value = randomAddress;
+                document.getElementById('traditionalResult').innerHTML = `
+                    <div style="background: #e2e3e5; padding: 10px; border-radius: 5px;">
+                        ✅ 已填入测试地址: ${randomAddress}<br>
+                        💡 这个地址将被授权使用您的代币
+                    </div>
+                `;
+            } else if (type === 'permit') {
+                const randomAddress = testAddresses[Math.floor(Math.random() * testAddresses.length)];
+                document.getElementById('permitSpender').value = randomAddress;
+                document.getElementById('permitResult').innerHTML = `
+                    <div style="background: #e2e3e5; padding: 10px; border-radius: 5px;">
+                        ✅ 已填入测试地址: ${randomAddress}<br>
+                        💡 这个地址将通过EIP712签名被授权
+                    </div>
+                `;
+            }
+        }
+
+        async function traditionalApprove() {
+            try {
+                if (!contract || !userAddress) {
+                    throw new Error('请先连接钱包和合约');
+                }
+
+                const spenderInput = document.getElementById('traditionalSpender').value;
+                const amount = document.getElementById('traditionalAmount').value;
+
+                // 标准化地址
+                const spender = ethers.utils.getAddress(spenderInput.trim());
+                const amountWei = ethers.utils.parseEther(amount);
+
+                document.getElementById('traditionalResult').innerHTML = '⏳ 正在执行approve交易...';
+
+                const tx = await contract.approve(spender, amountWei);
+                const receipt = await tx.wait();
+                traditionalGas = receipt.gasUsed.toNumber();
+
+                document.getElementById('traditionalResult').innerHTML = `
+                    <div class="success">
+                        <h4>✅ Approve成功！</h4>
+                        <p>交易哈希: ${tx.hash}</p>
+                        <p>Gas使用: ${traditionalGas}</p>
+                        <p>授权给: ${spender}</p>
+                        <p class="highlight">注意：这只是第一步，实际使用还需要transferFrom</p>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('traditionalResult').innerHTML =
+                    `<div class="error">❌ Approve失败: ${error.message}</div>`;
+            }
+        }
+
+        async function generatePermitSignature() {
+            try {
+                if (!contract || !userAddress) {
+                    throw new Error('请先连接钱包和合约');
+                }
+
+                const spenderInput = document.getElementById('permitSpender').value;
+                const amount = document.getElementById('permitAmount').value;
+
+                // 标准化地址
+                const spender = ethers.utils.getAddress(spenderInput.trim());
+                const amountWei = ethers.utils.parseEther(amount);
+                const nonce = await contract.getNonce(userAddress);
+                const deadline = Math.floor(Date.now() / 1000) + 3600; // 1小时后过期
+
+                const value = {
+                    owner: userAddress,
+                    spender: spender,
+                    value: amountWei.toString(),
+                    nonce: nonce.toNumber(),
+                    deadline: deadline
+                };
+
+                document.getElementById('permitResult').innerHTML = '⏳ 请在MetaMask中确认签名...';
+
+                // 生成EIP712签名
+                const signature = await signer._signTypedData(domain, types, value);
+                const sig = ethers.utils.splitSignature(signature);
+
+                permitSignature = {
+                    owner: userAddress,
+                    spender: spender,
+                    value: amountWei,
+                    deadline: deadline,
+                    v: sig.v,
+                    r: sig.r,
+                    s: sig.s
+                };
+
+                document.getElementById('permitResult').innerHTML = `
+                    <div class="success">
+                        <h4>✅ 签名生成成功！</h4>
+                        <p class="highlight">🎉 这一步完全免费，没有gas费用！</p>
+                        <div class="code">
+                            <p>授权给: ${spender}</p>
+                            <p>金额: ${ethers.utils.formatEther(amountWei)} tokens</p>
+                            <p>v: ${sig.v}</p>
+                            <p>r: ${sig.r}</p>
+                            <p>s: ${sig.s}</p>
+                        </div>
+                        <p>现在可以执行permit了</p>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('permitResult').innerHTML =
+                    `<div class="error">❌ 签名失败: ${error.message}</div>`;
+            }
+        }
+
+        async function executePermit() {
+            try {
+                if (!permitSignature) {
+                    throw new Error('请先生成签名');
+                }
+
+                document.getElementById('permitResult').innerHTML += `
+                    <div style="background: #e2e3e5; padding: 10px; border-radius: 5px; margin: 10px 0;">
+                        <h4>🔍 Permit函数参数详解：</h4>
+                        <div class="code">
+                            <p><strong>owner:</strong> ${permitSignature.owner} (代币拥有者，即您的地址)</p>
+                            <p><strong>spender:</strong> ${permitSignature.spender} (被授权者地址)</p>
+                            <p><strong>value:</strong> ${ethers.utils.formatEther(permitSignature.value)} tokens (授权金额)</p>
+                            <p><strong>deadline:</strong> ${new Date(permitSignature.deadline * 1000).toLocaleString()} (签名过期时间)</p>
+                            <p><strong>v:</strong> ${permitSignature.v} (签名参数v)</p>
+                            <p><strong>r:</strong> ${permitSignature.r} (签名参数r)</p>
+                            <p><strong>s:</strong> ${permitSignature.s} (签名参数s)</p>
+                        </div>
+                        <p><strong>🎯 执行结果：</strong> allowance[${permitSignature.owner}][${permitSignature.spender}] = ${ethers.utils.formatEther(permitSignature.value)}</p>
+                    </div>
+                    <p>⏳ 正在执行permit交易...</p>
+                `;
+
+                const tx = await contract.permit(
+                    permitSignature.owner,    // 代币拥有者（您的地址）
+                    permitSignature.spender,  // 被授权者地址
+                    permitSignature.value,    // 授权金额
+                    permitSignature.deadline, // 签名过期时间
+                    permitSignature.v,        // 签名参数v
+                    permitSignature.r,        // 签名参数r
+                    permitSignature.s         // 签名参数s
+                );
+
+                const receipt = await tx.wait();
+                permitGas = receipt.gasUsed.toNumber();
+
+                document.getElementById('permitResult').innerHTML += `
+                    <div class="success">
+                        <h4>✅ Permit执行成功！</h4>
+                        <p>交易哈希: ${tx.hash}</p>
+                        <p>Gas使用: ${permitGas}</p>
+                        <p class="highlight">🎯 实际效果：等同于调用 approve(${permitSignature.spender}, ${ethers.utils.formatEther(permitSignature.value)})</p>
+                        <p><strong>重要：</strong>这不是转账，而是授权！代币仍在您的账户中。</p>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('permitResult').innerHTML +=
+                    `<div class="error">❌ Permit执行失败: ${error.message}</div>`;
+            }
+        }
+
+        async function checkAllowance() {
+            try {
+                if (!contract || !userAddress) {
+                    throw new Error('请先连接钱包和合约');
+                }
+
+                let spender = document.getElementById('traditionalSpender').value.trim();
+
+                // 修复地址校验和问题
+                if (spender) {
+                    try {
+                        // 使用ethers.js的getAddress函数来标准化地址格式
+                        spender = ethers.utils.getAddress(spender);
+                    } catch (addressError) {
+                        throw new Error(`无效的地址格式: ${spender}`);
+                    }
+                } else {
+                    throw new Error('请输入授权地址');
+                }
+
+                const allowance = await contract.allowance(userAddress, spender);
+
+                document.getElementById('traditionalResult').innerHTML += `
+                    <div class="success">
+                        <p>✅ 当前授权额度: ${ethers.utils.formatEther(allowance)} tokens</p>
+                        <p>授权给: ${spender}</p>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('traditionalResult').innerHTML += `
+                    <div class="error">❌ 检查授权失败: ${error.message}</div>
+                `;
+                console.error('检查授权失败:', error);
+            }
+        }
+
+        function compareResults() {
+            const comparison = `
+                <div class="success">
+                    <h3>📊 Gas费用对比结果</h3>
+                    <table style="width:100%; border-collapse: collapse;">
+                        <tr style="background:#f8f9fa;">
+                            <th style="border:1px solid #ddd; padding:8px;">方式</th>
+                            <th style="border:1px solid #ddd; padding:8px;">步骤</th>
+                            <th style="border:1px solid #ddd; padding:8px;">Gas费用</th>
+                            <th style="border:1px solid #ddd; padding:8px;">用户体验</th>
+                        </tr>
+                        <tr>
+                            <td style="border:1px solid #ddd; padding:8px;">🔴 传统方式</td>
+                            <td style="border:1px solid #ddd; padding:8px;">approve + transferFrom</td>
+                            <td style="border:1px solid #ddd; padding:8px;">${traditionalGas} + ~51,000 ≈ ${traditionalGas + 51000}</td>
+                            <td style="border:1px solid #ddd; padding:8px;">需要2笔交易</td>
+                        </tr>
+                        <tr>
+                            <td style="border:1px solid #ddd; padding:8px;">🟢 EIP712方式</td>
+                            <td style="border:1px solid #ddd; padding:8px;">签名 + permit</td>
+                            <td style="border:1px solid #ddd; padding:8px;">0 + ${permitGas} = ${permitGas}</td>
+                            <td style="border:1px solid #ddd; padding:8px;">只需1次签名</td>
+                        </tr>
+                        <tr style="background:#d4edda;">
+                            <td style="border:1px solid #ddd; padding:8px;"><strong>节省</strong></td>
+                            <td style="border:1px solid #ddd; padding:8px;"><strong>-</strong></td>
+                            <td style="border:1px solid #ddd; padding:8px;"><strong>${(traditionalGas + 51000) - permitGas} gas</strong></td>
+                            <td style="border:1px solid #ddd; padding:8px;"><strong>更好的UX</strong></td>
+                        </tr>
+                    </table>
+
+                    <h4>🎯 关键优势：</h4>
+                    <ul>
+                        <li>✅ 用户只需要签名，无需发送交易</li>
+                        <li>✅ 第三方可以代付gas费用</li>
+                        <li>✅ 可以批量处理多个授权</li>
+                        <li>✅ 更好的用户体验</li>
+                    </ul>
+                </div>
+            `;
+
+            document.getElementById('comparison').innerHTML = comparison;
+        }
+
+        function showPermitVsTransfer() {
+            const explanation = `
+                <div class="success">
+                    <h3>🔍 Permit vs Transfer 详细对比</h3>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0;">
+                        <div style="background: #f8f9fa; padding: 15px; border-radius: 5px;">
+                            <h4>🔐 permit() 函数</h4>
+                            <div class="code">
+                                <p><strong>作用：</strong>授权（不转账）</p>
+                                <p><strong>等同于：</strong>approve(spender, amount)</p>
+                                <p><strong>结果：</strong>allowance[owner][spender] = amount</p>
+                                <p><strong>代币位置：</strong>仍在owner账户中</p>
+                                <p><strong>实际用途：</strong>给予使用权限</p>
+                            </div>
+                        </div>
+
+                        <div style="background: #e7f3ff; padding: 15px; border-radius: 5px;">
+                            <h4>💸 transfer() 函数</h4>
+                            <div class="code">
+                                <p><strong>作用：</strong>转账（实际移动代币）</p>
+                                <p><strong>等同于：</strong>transfer(to, amount)</p>
+                                <p><strong>结果：</strong>balanceOf[from] -= amount, balanceOf[to] += amount</p>
+                                <p><strong>代币位置：</strong>从from转移到to</p>
+                                <p><strong>实际用途：</strong>转移所有权</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <h4>🔄 完整的DeFi交易流程：</h4>
+                    <div class="code">
+                        <p><strong>传统方式：</strong></p>
+                        <p>1. 用户调用 approve(Uniswap, 1000) - 授权Uniswap使用1000代币</p>
+                        <p>2. 用户在Uniswap上交易，Uniswap调用 transferFrom(用户, Uniswap, 1000) - 实际转移代币</p>
+                        <br>
+                        <p><strong>EIP712方式：</strong></p>
+                        <p>1. 用户生成EIP712签名 - 离线授权（免费）</p>
+                        <p>2. Uniswap调用 permit(...) - 执行授权</p>
+                        <p>3. Uniswap调用 transferFrom(...) - 实际转移代币</p>
+                        <p>（步骤2和3可以在一笔交易中完成）</p>
+                    </div>
+
+                    <h4>📝 为什么permit需要这么多参数？</h4>
+                    <div class="code">
+                        <p><strong>owner:</strong> 代币拥有者地址 - 验证是谁在授权</p>
+                        <p><strong>spender:</strong> 被授权者地址 - 确认授权给谁</p>
+                        <p><strong>value:</strong> 授权金额 - 确认授权多少</p>
+                        <p><strong>deadline:</strong> 过期时间 - 防止签名被长期滥用</p>
+                        <p><strong>v, r, s:</strong> 签名数据 - 证明签名的真实性</p>
+                    </div>
+
+                    <div style="background: #fff3cd; padding: 10px; border-radius: 5px; margin-top: 15px;">
+                        <strong>💡 关键理解：</strong>
+                        permit函数只是授权，不会转移代币。就像给别人一张支票的使用权，但钱还在您的账户里，只有当别人真正使用这张"支票"时，钱才会转移。
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('comparison').innerHTML = explanation;
+        }
+
+        function showGaslessDemo() {
+            const gaslessDemo = `
+                <div class="success">
+                    <h3>🚀 协议代付Gas演示</h3>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div style="background: #f8d7da; padding: 15px; border-radius: 5px;">
+                            <h4>🔴 传统方式的问题</h4>
+                            <div class="code">
+                                <p><strong>用户钱包状态：</strong></p>
+                                <p>• 1000 USDC</p>
+                                <p>• 0.05 ETH (用于gas)</p>
+                                <br>
+                                <p><strong>操作流程：</strong></p>
+                                <p>1. approve() - 用户支付 ~0.002 ETH</p>
+                                <p>2. deposit() - 用户支付 ~0.003 ETH</p>
+                                <br>
+                                <p><strong>问题：</strong></p>
+                                <p>❌ 用户必须持有ETH</p>
+                                <p>❌ 新用户门槛高</p>
+                                <p>❌ 需要两次交易确认</p>
+                            </div>
+                        </div>
+
+                        <div style="background: #d4edda; padding: 15px; border-radius: 5px;">
+                            <h4>🟢 EIP712代付Gas方案</h4>
+                            <div class="code">
+                                <p><strong>用户钱包状态：</strong></p>
+                                <p>• 1000 USDC</p>
+                                <p>• 0 ETH (不需要ETH！)</p>
+                                <br>
+                                <p><strong>操作流程：</strong></p>
+                                <p>1. 用户生成EIP712签名 - 免费</p>
+                                <p>2. 协议执行permit+deposit - 协议支付gas</p>
+                                <br>
+                                <p><strong>优势：</strong></p>
+                                <p>✅ 用户零ETH也能操作</p>
+                                <p>✅ 降低新用户门槛</p>
+                                <p>✅ 一步完成所有操作</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <h4>🔧 技术实现原理：</h4>
+                    <div class="code">
+                        <p><strong>1. 用户侧：</strong></p>
+                        <p>• 用户生成EIP712签名（包含permit信息）</p>
+                        <p>• 将签名发送给协议的Relayer服务</p>
+                        <br>
+                        <p><strong>2. 协议侧（Relayer）：</strong></p>
+                        <p>• 验证签名的有效性</p>
+                        <p>• 使用协议的ETH支付gas费用</p>
+                        <p>• 执行 permit() + 业务逻辑</p>
+                        <br>
+                        <p><strong>3. 成本回收：</strong></p>
+                        <p>• 从用户的代币中扣除等值gas费用</p>
+                        <p>• 或者协议承担gas成本（营销策略）</p>
+                        <p>• 或者通过交易手续费覆盖</p>
+                    </div>
+
+                    <h4>🌟 实际应用场景：</h4>
+                    <div style="background: #e2e3e5; padding: 10px; border-radius: 5px;">
+                        <p><strong>Uniswap V3示例：</strong></p>
+                        <p>1. 用户想用1000 USDC换ETH，但钱包里没有ETH支付gas</p>
+                        <p>2. 用户生成EIP712签名授权Uniswap使用USDC</p>
+                        <p>3. Uniswap的Relayer执行：permit + swap</p>
+                        <p>4. 从交换得到的ETH中扣除gas费用</p>
+                        <p>5. 用户获得剩余的ETH</p>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('comparison').innerHTML = gaslessDemo;
+        }
+
+        function showBatchOptimization() {
+            const batchDemo = `
+                <div class="success">
+                    <h3>📦 打包优化演示</h3>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div style="background: #fff3cd; padding: 15px; border-radius: 5px;">
+                            <h4>🔴 传统方式：多次交易</h4>
+                            <div class="code">
+                                <p><strong>场景：用户想要进行多个DeFi操作</strong></p>
+                                <br>
+                                <p><strong>操作序列：</strong></p>
+                                <p>1. approve(Compound, 1000 USDC) - Gas: ~46,000</p>
+                                <p>2. deposit(1000 USDC) - Gas: ~150,000</p>
+                                <p>3. approve(Uniswap, 500 DAI) - Gas: ~46,000</p>
+                                <p>4. swap(500 DAI → ETH) - Gas: ~180,000</p>
+                                <br>
+                                <p><strong>总计：</strong></p>
+                                <p>• 4笔交易</p>
+                                <p>• ~422,000 gas</p>
+                                <p>• 4次用户确认</p>
+                                <p>• 等待4次区块确认</p>
+                            </div>
+                        </div>
+
+                        <div style="background: #d1ecf1; padding: 15px; border-radius: 5px;">
+                            <h4>🟢 EIP712打包优化</h4>
+                            <div class="code">
+                                <p><strong>场景：同样的DeFi操作</strong></p>
+                                <br>
+                                <p><strong>操作序列：</strong></p>
+                                <p>1. 用户生成2个EIP712签名 - 免费</p>
+                                <p>2. 协议执行批量操作：</p>
+                                <p>   • permit(Compound, 1000 USDC)</p>
+                                <p>   • deposit(1000 USDC)</p>
+                                <p>   • permit(Uniswap, 500 DAI)</p>
+                                <p>   • swap(500 DAI → ETH)</p>
+                                <br>
+                                <p><strong>总计：</strong></p>
+                                <p>• 1笔交易</p>
+                                <p>• ~380,000 gas (节省10%)</p>
+                                <p>• 1次用户确认</p>
+                                <p>• 等待1次区块确认</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <h4>🔧 打包优化的技术原理：</h4>
+                    <div class="code">
+                        <p><strong>1. 多重调用（Multicall）：</strong></p>
+                        <p>• 将多个函数调用打包到一个交易中</p>
+                        <p>• 减少交易开销（21,000 gas per transaction）</p>
+                        <p>• 原子性执行（要么全成功，要么全失败）</p>
+                        <br>
+                        <p><strong>2. Gas优化：</strong></p>
+                        <p>• 共享交易基础成本</p>
+                        <p>• 减少状态变更的存储成本</p>
+                        <p>• 优化调用栈深度</p>
+                        <br>
+                        <p><strong>3. 用户体验优化：</strong></p>
+                        <p>• 一次签名完成复杂操作</p>
+                        <p>• 减少等待时间</p>
+                        <p>• 降低失败风险</p>
+                    </div>
+
+                    <h4>🌟 实际应用案例：</h4>
+                    <div style="background: #e2e3e5; padding: 10px; border-radius: 5px;">
+                        <p><strong>1inch聚合器：</strong></p>
+                        <p>• 用户想要最优价格交换代币</p>
+                        <p>• 需要在多个DEX上分别执行部分交易</p>
+                        <p>• 传统方式：需要多次approve + 多次swap</p>
+                        <p>• EIP712方式：一次签名，1inch执行所有操作</p>
+                        <br>
+                        <p><strong>DeFi收益农场：</strong></p>
+                        <p>• 用户想要：存入LP → 质押 → 领取奖励 → 复投</p>
+                        <p>• 传统方式：8-10笔交易</p>
+                        <p>• EIP712方式：2-3个签名，1笔交易完成</p>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('comparison').innerHTML = batchDemo;
+        }
+
+        // 页面加载时的检查和初始化
+        window.onload = async function() {
+            // 检查ethers.js是否加载成功
+            if (!checkEthersLoaded()) {
+                return;
+            }
+
+            // 显示ethers.js版本信息
+            console.log('✅ ethers.js 加载成功，版本:', ethers.version);
+
+            // 预加载合约ABI
+            console.log('🔄 正在加载合约ABI...');
+            const abiLoaded = await loadContractABI();
+
+            // 设置默认合约地址提示
+            document.getElementById('contractAddress').value = '请在Remix中部署合约后填入地址';
+
+            // 添加成功加载提示
+            const statusDiv = document.createElement('div');
+            statusDiv.innerHTML = `
+                <div style="background: #d4edda; border: 1px solid #c3e6cb; padding: 10px; margin: 10px 0; border-radius: 5px;">
+                    ✅ ethers.js v${ethers.version} 加载成功！<br>
+                    ${abiLoaded ?
+                        `✅ 合约ABI加载成功！包含 ${contractABI.length} 个函数/事件` :
+                        '⚠️ ABI文件加载失败，使用备用简化ABI'
+                    }<br>
+                    可以开始测试了。
+                </div>
+            `;
+            document.body.insertBefore(statusDiv, document.body.firstChild);
+        };
+    </script>
+</body>
+</html>
